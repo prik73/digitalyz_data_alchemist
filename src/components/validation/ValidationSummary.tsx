@@ -1,3 +1,4 @@
+// components/validation/EnhancedValidationSummary.tsx
 'use client';
 
 import React, { useState } from 'react';
@@ -6,18 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import {
-  AlertTriangle,
-  CheckCircle,
-  Info,
-  ChevronDown,
-  ChevronUp,
-  Loader2,
-  FileText,
-  Users,
-  Briefcase,
-  Lightbulb
-} from 'lucide-react';
+import {AlertTriangle,CheckCircle,Info,ChevronDown,ChevronUp,Loader2,FileText,Users,Briefcase,Lightbulb,Zap,Wrench,CheckCheck} from 'lucide-react';
 
 interface ValidationResult {
   type: string;
@@ -32,13 +22,23 @@ interface ValidationResult {
 interface ValidationSummaryProps {
   validationResults: ValidationResult[];
   isValidating: boolean;
+  data: {
+    clients: any[];
+    workers: any[];
+    tasks: any[];
+  };
+  onDataChange: (entityType: 'clients' | 'workers' | 'tasks', newData: any[]) => void;
 }
 
-const ValidationSummary: React.FC<ValidationSummaryProps> = ({
+export default function ValidationSummary({
   validationResults,
-  isValidating
-}) => {
+  isValidating,
+  data,
+  onDataChange
+}: ValidationSummaryProps) {
   const [expandedSections, setExpandedSections] = useState<string[]>(['errors']);
+  const [fixingErrors, setFixingErrors] = useState<Set<string>>(new Set());
+  const [fixedErrors, setFixedErrors] = useState<Set<string>>(new Set());
 
   const toggleSection = (section: string) => {
     setExpandedSections(prev =>
@@ -46,6 +46,99 @@ const ValidationSummary: React.FC<ValidationSummaryProps> = ({
         ? prev.filter(s => s !== section)
         : [...prev, section]
     );
+  };
+
+  // Auto-fix individual validation errors
+const handleAutoFix = async (validation: ValidationResult, index: number) => {
+  const fixId = `${validation.entityType}-${validation.entityId}-${validation.field}-${index}`;
+  setFixingErrors(prev => new Set([...prev, fixId]));
+
+  try {
+    // Create a simple correction object
+    const correction = {
+      entityType: validation.entityType,
+      entityId: validation.entityId,
+      field: validation.field,
+      newValue: getAutoFixValue(validation), // Helper function below
+      action: validation.type
+    };
+
+    const response = await fetch('/api/ai/apply-correction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        correction,
+        currentData: data
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    
+    if (result.success) {
+      onDataChange(validation.entityType, result.correctedData);
+      setFixedErrors(prev => new Set([...prev, fixId]));
+      console.log(`✅ Auto-fixed ${validation.type} for ${validation.entityId}`);
+    }
+    
+  } catch (error) {
+    console.error('Error auto-fixing:', error);
+    alert('Failed to apply auto-fix. Please try again.');
+  } finally {
+    setFixingErrors(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(fixId);
+      return newSet;
+    });
+  }
+};
+
+// Helper function to determine fix value
+function getAutoFixValue(validation: ValidationResult): any {
+  switch (validation.type) {
+    case 'invalid_priority':
+      return 3; // Default valid priority
+    case 'invalid_duration':
+      return 1; // Minimum valid duration
+    case 'unparseable_slots':
+    case 'invalid_slots_format':
+      return '[1,2,3]'; // Default slots
+    case 'invalid_json':
+      return '{}'; // Empty JSON object
+    case 'overloaded_worker':
+      return 3; // Reasonable max load
+    default:
+      return 'fixed_value';
+  }
+}
+
+  // Bulk fix all auto-fixable errors
+  const handleBulkAutoFix = async () => {
+    const autoFixableErrors = validationResults.filter(r => 
+      r.severity === 'error' && isAutoFixable(r)
+    );
+
+    for (let i = 0; i < autoFixableErrors.length; i++) {
+      await handleAutoFix(autoFixableErrors[i], i);
+      // Small delay to prevent overwhelming the system
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  };
+
+  // Check if a validation error can be auto-fixed
+  const isAutoFixable = (validation: ValidationResult): boolean => {
+    const autoFixableTypes = [
+      'worker_overload',
+      'out_of_range', 
+      'malformed_list',
+      'broken_json',
+      'duplicate_id',
+      'unknown_reference'
+    ];
+    return autoFixableTypes.includes(validation.type);
   };
 
   const getIcon = (entityType: 'clients' | 'workers' | 'tasks') => {
@@ -100,11 +193,12 @@ const ValidationSummary: React.FC<ValidationSummaryProps> = ({
     
     if (totalWeight === 0) return 100;
     
-    // Scale down based on total issues (more issues = lower score)
     const baseScore = Math.max(0, 100 - totalWeight * 5);
     return Math.round(baseScore);
   };
+
   const qualityScore = calculateQualityScore();
+  const autoFixableCount = groupedResults.error.filter(isAutoFixable).length;
 
   const getScoreColor = (score: number) => {
     if (score >= 80) return 'text-green-600';
@@ -112,43 +206,81 @@ const ValidationSummary: React.FC<ValidationSummaryProps> = ({
     return 'text-red-600';
   };
 
-  const renderValidationItem = (result: ValidationResult, index: number) => (
-    <div
-      key={index}
-      className={`p-3 rounded-lg border ${getSeverityColor(result.severity)}`}
-    >
-      <div className="flex items-start gap-3">
-        <div className="flex-shrink-0 mt-0.5">
-          {getSeverityIcon(result.severity)}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            {getIcon(result.entityType)}
-            <span className="font-medium text-sm capitalize">
-              {result.entityType}
-            </span>
-            {result.entityId && (
-              <Badge variant="outline" className="text-xs">
-                {result.entityId}
-              </Badge>
-            )}
-            {result.field && (
-              <Badge variant="secondary" className="text-xs">
-                {result.field}
-              </Badge>
+  const renderValidationItem = (result: ValidationResult, index: number) => {
+    const fixId = `${result.entityType}-${result.entityId}-${result.field}-${index}`;
+    const isFixing = fixingErrors.has(fixId);
+    const isFixed = fixedErrors.has(fixId);
+    const canAutoFix = isAutoFixable(result);
+
+    return (
+      <div
+        key={index}
+        className={`p-3 rounded-lg border ${getSeverityColor(result.severity)} ${
+          isFixed ? 'opacity-50 bg-green-50' : ''
+        }`}
+      >
+        <div className="flex items-start gap-3">
+          <div className="flex-shrink-0 mt-0.5">
+            {isFixed ? (
+              <CheckCircle className="w-4 h-4 text-green-500" />
+            ) : (
+              getSeverityIcon(result.severity)
             )}
           </div>
-          <p className="text-sm mb-2">{result.message}</p>
-          {result.suggestion && (
-            <div className="flex items-start gap-2 mt-2 p-2 bg-white bg-opacity-50 rounded border">
-              <Lightbulb className="w-3 h-3 mt-0.5 text-blue-500 flex-shrink-0" />
-              <p className="text-xs text-gray-600">{result.suggestion}</p>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              {getIcon(result.entityType)}
+              <span className="font-medium text-sm capitalize">
+                {result.entityType}
+              </span>
+              {result.entityId && (
+                <Badge variant="outline" className="text-xs">
+                  {result.entityId}
+                </Badge>
+              )}
+              {result.field && (
+                <Badge variant="secondary" className="text-xs">
+                  {result.field}
+                </Badge>
+              )}
+              {isFixed && (
+                <Badge className="text-xs bg-green-100 text-green-800">
+                  Fixed
+                </Badge>
+              )}
             </div>
-          )}
+            <p className="text-sm mb-2">{result.message}</p>
+            {result.suggestion && !isFixed && (
+              <div className="flex items-start gap-2 mt-2 p-2 bg-white bg-opacity-50 rounded border">
+                <Lightbulb className="w-3 h-3 mt-0.5 text-blue-500 flex-shrink-0" />
+                <p className="text-xs text-gray-600 flex-1">{result.suggestion}</p>
+                {canAutoFix && (
+                  <Button
+                    size="sm"
+                    onClick={() => handleAutoFix(result, index)}
+                    disabled={isFixing}
+                    className="h-6 px-2 text-xs bg-blue-600 hover:bg-blue-700"
+                  >
+                    {isFixing ? (
+                      <>
+                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                        Fixing...
+                      </>
+                    ) : (
+                      <>
+                        <Wrench className="w-3 h-3 mr-1" />
+                        Auto-Fix
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   if (isValidating) {
     return (
@@ -210,11 +342,36 @@ const ValidationSummary: React.FC<ValidationSummaryProps> = ({
             <div className="text-xs text-blue-600">Info</div>
           </div>
         </div>
+
+        {/* Bulk Auto-Fix Button */}
+        {autoFixableCount > 0 && (
+          <div className="p-4 bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="font-medium text-sm text-blue-800">
+                  🤖 AI Auto-Fix Available
+                </h4>
+                <p className="text-xs text-blue-700 mt-1">
+                  {autoFixableCount} errors can be automatically fixed
+                </p>
+              </div>
+              <Button
+                onClick={handleBulkAutoFix}
+                className="bg-blue-600 hover:bg-blue-700"
+                size="sm"
+              >
+                <Zap className="w-4 h-4 mr-2" />
+                Fix All ({autoFixableCount})
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* No Issues State */}
         {validationResults.length === 0 && (
           <div className="text-center py-6">
             <CheckCircle className="w-12 h-12 mx-auto text-green-500 mb-3" />
-            <h3 className="font-medium text-green-700 mb-1">All Good!</h3>
+            <h3 className="font-medium text-green-700 mb-1">Perfect Data Quality!</h3>
             <p className="text-sm text-gray-600">
               No validation issues found in your data.
             </p>
@@ -237,6 +394,11 @@ const ValidationSummary: React.FC<ValidationSummaryProps> = ({
                   <span className="font-medium text-red-700">
                     Errors ({groupedResults.error.length})
                   </span>
+                  {autoFixableCount > 0 && (
+                    <Badge className="bg-blue-100 text-blue-800 text-xs">
+                      {autoFixableCount} auto-fixable
+                    </Badge>
+                  )}
                 </div>
                 {expandedSections.includes('errors') ? (
                   <ChevronUp className="w-4 h-4" />
@@ -319,24 +481,22 @@ const ValidationSummary: React.FC<ValidationSummaryProps> = ({
 
         {/* Quality Improvement Tips */}
         {validationResults.length > 0 && (
-          <div className="mt-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
+          <div className="mt-6 p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
             <div className="flex items-center gap-2 mb-2">
-              <Lightbulb className="w-4 h-4 text-blue-600" />
-              <span className="font-medium text-blue-700 text-sm">
-                Data Quality Tips
+              <CheckCheck className="w-4 h-4 text-green-600" />
+              <span className="font-medium text-green-700 text-sm">
+                Quick Fixes Available
               </span>
             </div>
-            <ul className="text-xs text-blue-600 space-y-1">
-              <li>• Fix errors first as they prevent proper data processing</li>
-              <li>• Address warnings to improve data reliability</li>
-              <li>• Use the inline editor to make quick corrections</li>
-              <li>• Check suggestions for automated fixes</li>
+            <ul className="text-xs text-green-600 space-y-1">
+              <li>• Click "Auto-Fix" buttons next to errors for instant fixes</li>
+              <li>• Use "Fix All" to resolve multiple issues at once</li>
+              <li>• Data quality score will improve as errors are fixed</li>
+              <li>• Manual edits are available in the data grid tabs</li>
             </ul>
           </div>
         )}
       </CardContent>
     </Card>
   );
-};
-
-export default ValidationSummary;
+}

@@ -1,10 +1,32 @@
-// src/app/api/ai/analyze-patterns/route.ts - REAL LLM VERSION
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+
+interface Suggestion {
+pattern: string;
+confidence?: number;
+// add more fields if needed
+}
+interface Client {
+  RequestedTaskIDs: string;
+}
+
+interface Task {
+  TaskID: string;
+}
+
+interface Phase {
+  id: string;
+}
+
+interface Action {
+  type: "coRun";
+}
+
 
 export async function POST(request: Request) {
   try {
@@ -20,74 +42,68 @@ export async function POST(request: Request) {
       return NextResponse.json({ suggestions: [] });
     }
 
-    // 🚀 REAL DATA ANALYSIS WITH LLM
-    const realSuggestions = await analyzeWithLLM(data, currentRules || []);
-    
-    console.log('✅ LLM returned suggestions:', realSuggestions.length);
-    return NextResponse.json({ suggestions: realSuggestions });
+    // 🚀 TRY LLM FIRST, FALLBACK IF FAILS
+    try {
+      const llmSuggestions = await analyzeWithLLM(data, currentRules || []);
+      console.log('✅ LLM analysis successful:', llmSuggestions.length);
+      return NextResponse.json({ suggestions: llmSuggestions });
+    } catch (llmError) {
+      console.log('🔄 LLM failed, using fallback analysis');
+      const fallbackSuggestions = analyzeLocalPatterns(data);
+      console.log('✅ Fallback analysis:', fallbackSuggestions.length);
+      return NextResponse.json({ 
+        suggestions: fallbackSuggestions,
+        usedFallback: true 
+      });
+    }
 
   } catch (error) {
-    console.error('❌ Error in analyze-patterns:', error);
-    
-    // Fallback to simple pattern analysis if LLM fails
-    const fallbackSuggestions = analyzeLocalPatterns(data);
-    console.log('🔄 Using fallback analysis:', fallbackSuggestions.length);
-    
+    console.error('❌ Complete API failure:', error);
     return NextResponse.json({ 
-      suggestions: fallbackSuggestions,
-      usedFallback: true 
-    });
+      error: 'Analysis failed', 
+      suggestions: [] 
+    }, { status: 500 });
   }
 }
 
 async function analyzeWithLLM(data: any, currentRules: any[]) {
-  // Prepare data summary for LLM
+  // Prepare SIMPLE data summary for LLM
+  const taskRequestPatterns = getTaskRequestPatterns(data.clients);
+  const workerGroupStats = getWorkerGroupDistribution(data.workers);
+  
   const dataSummary = {
-    clientCount: data.clients.length,
-    workerCount: data.workers.length,
-    taskCount: data.tasks.length,
+    totalClients: data.clients.length,
+    totalWorkers: data.workers.length,
+    totalTasks: data.tasks.length,
     
-    // Client patterns
-    clientGroups: getClientGroupDistribution(data.clients),
-    priorityDistribution: getPriorityDistribution(data.clients),
-    taskRequestPatterns: getTaskRequestPatterns(data.clients),
+    // Most frequent task pairs
+    frequentTaskPairs: taskRequestPatterns.frequentPairs.slice(0, 3),
     
-    // Worker patterns  
-    workerGroups: getWorkerGroupDistribution(data.workers),
-    skillDistribution: getSkillDistribution(data.workers),
-    workloadPatterns: getWorkloadPatterns(data.workers),
+    // Worker group loads
+    workerGroupLoads: Object.entries(workerGroupStats)
+      .map(([group, stats]) => ({
+        group,
+        avgLoad: Math.round(stats.avgLoad * 10) / 10,
+        workerCount: stats.count
+      }))
+      .filter(g => g.avgLoad > 3),
     
-    // Task patterns
-    taskCategories: getTaskCategories(data.tasks),
-    durationPatterns: getDurationPatterns(data.tasks),
-    skillRequirements: getSkillRequirements(data.tasks),
-    
-    // Existing rules to avoid duplicates
-    existingRuleTypes: currentRules.map(r => r.type)
+    // Existing rule types to avoid duplicates
+    existingRules: currentRules.map(r => r.type)
   };
 
-  const systemPrompt = `You are an expert business rule analyst. Analyze the provided data patterns and suggest 2-4 intelligent business rules.
+  // 🔥 ULTRA-SPECIFIC PROMPT FOR JSON ONLY
+  const systemPrompt = `You are a business rule generator. Return ONLY a JSON array, no other text.
 
-AVAILABLE RULE TYPES:
-1. "coRun" - Tasks that should run together (when they're frequently requested together)
-2. "loadLimit" - Maximum workload per worker group (when groups are overloaded)  
-3. "phaseWindow" - Restrict tasks to specific phases (for long-duration or conflicting tasks)
-4. "slotRestriction" - Common slot requirements (when groups need coordination)
+Analyze the data and return 1-3 rule suggestions in this EXACT format:
 
-LOOK FOR THESE PATTERNS:
-- Task pairs/groups requested together by multiple clients → coRun rule
-- Worker groups with high average loads → loadLimit rule
-- Tasks with long durations (>3 phases) → phaseWindow rule  
-- Groups that need coordination → slotRestriction rule
-
-Return a JSON array of suggestions:
 [
   {
     "type": "coRun",
-    "title": "Co-run Tasks T1 & T2",
-    "description": "These tasks are requested together by 8 clients",
-    "reasoning": "T1 and T2 appear together in 73% of client requests (22 out of 30 clients)",
-    "confidence": 88,
+    "title": "Co-run Tasks T1 & T2", 
+    "description": "These tasks are requested together frequently",
+    "reasoning": "Found in X client requests",
+    "confidence": 85,
     "impact": "high",
     "parameters": {"taskIds": ["T1", "T2"]},
     "affectedEntities": ["T1", "T2"],
@@ -95,54 +111,73 @@ Return a JSON array of suggestions:
   }
 ]
 
-Focus on the most impactful patterns. Use actual data values in reasoning. Confidence should be 60-95 based on pattern strength.`;
+RULES:
+- ONLY return the JSON array, no explanation text
+- Use "coRun" for task pairs requested together
+- Use "loadLimit" for overloaded worker groups (avgLoad > 4)
+- confidence: 60-95 number
+- impact: "high", "medium", or "low"
+- Max 3 suggestions
+
+Data to analyze: ${JSON.stringify(dataSummary)}`;
 
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [
-        { role: "system", content: systemPrompt },
-        { 
-          role: "user", 
-          content: `Analyze this data for business rule recommendations:\n\n${JSON.stringify(dataSummary, null, 2)}`
-        }
+        { role: "system", content: "You must respond with only valid JSON. No explanations." },
+        { role: "user", content: systemPrompt }
       ],
-      temperature: 0.3,
-      max_tokens: 1500,
+      temperature: 0.1,
+      max_tokens: 800,
     });
 
-    const response = completion.choices[0].message.content;
-    console.log('🤖 LLM raw response:', response?.substring(0, 200) + '...');
+    const response = completion.choices[0].message.content?.trim();
+    console.log('🤖 LLM raw response (first 100 chars):', response?.substring(0, 100));
     
     if (!response) {
       throw new Error('No response from OpenAI');
     }
 
-    // Parse LLM response
-    let suggestions;
+    // 🔧 BETTER JSON EXTRACTION
+    let cleanResponse = response;
+    
+    // Remove any text before the JSON array
+    const jsonStart = cleanResponse.indexOf('[');
+    const jsonEnd = cleanResponse.lastIndexOf(']');
+    
+    if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+      cleanResponse = cleanResponse.substring(jsonStart, jsonEnd + 1);
+    }
+    
+    // Remove markdown code blocks if present
+    cleanResponse = cleanResponse.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+    
+    console.log('🔧 Cleaned response:', cleanResponse);
+
+
+    let suggestions: Suggestion[];
     try {
-      // Try to extract JSON from response
-      const jsonMatch = response.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        suggestions = JSON.parse(jsonMatch[0]);
-      } else {
-        suggestions = JSON.parse(response);
-      }
-    } catch (parseError) {
-      console.error('❌ Failed to parse LLM response:', parseError);
-      throw new Error('Invalid JSON from LLM');
+    suggestions = JSON.parse(cleanResponse) as Suggestion[];
+    } catch (parseError: unknown) {
+    console.error('❌ JSON parse failed, response was:', cleanResponse);
+    throw new Error(`Invalid JSON: ${String(parseError)}`);
+    }
+    // Validate it's an array
+    if (!Array.isArray(suggestions)) {
+      throw new Error('Response is not an array');
     }
 
     // Validate and enhance suggestions
     const validSuggestions = suggestions
       .filter((s: any) => s.type && s.title && s.description)
-      .slice(0, 4) // Limit to 4 suggestions
+      .slice(0, 3) // Limit to 3
       .map((suggestion: any, index: number) => ({
-        id: `llm_suggestion_${Date.now()}_${index}`,
+        id: `llm_${Date.now()}_${index}`,
         type: suggestion.type,
         title: suggestion.title,
         description: suggestion.description,
-        reasoning: suggestion.reasoning || 'AI detected pattern in data',
+        reasoning: suggestion.reasoning || 'AI detected pattern',
         confidence: Math.min(95, Math.max(60, suggestion.confidence || 75)),
         impact: suggestion.impact || 'medium',
         parameters: suggestion.parameters || {},
@@ -150,46 +185,22 @@ Focus on the most impactful patterns. Use actual data values in reasoning. Confi
         pattern: suggestion.pattern || 'ai_detected'
       }));
 
-    console.log('✅ Processed LLM suggestions:', validSuggestions.length);
+    console.log('✅ Valid LLM suggestions:', validSuggestions.length);
     return validSuggestions;
 
-  } catch (llmError) {
-    console.error('❌ LLM analysis failed:', llmError);
-    throw llmError;
+  } catch (error) {
+    console.error('❌ LLM error:', error);
+    throw error;
   }
 }
 
-// Helper functions to analyze real data patterns
-function getClientGroupDistribution(clients: any[]) {
-  const groups: Record<string, number> = {};
-  clients.forEach(client => {
-    const group = client.GroupTag || 'Other';
-    groups[group] = (groups[group] || 0) + 1;
-  });
-  return groups;
-}
-
-function getPriorityDistribution(clients: any[]) {
-  const priorities: Record<number, number> = {};
-  clients.forEach(client => {
-    const priority = client.PriorityLevel || 1;
-    priorities[priority] = (priorities[priority] || 0) + 1;
-  });
-  return priorities;
-}
-
+// HELPER FUNCTIONS
 function getTaskRequestPatterns(clients: any[]) {
   const taskPairs: Record<string, number> = {};
-  const singleTasks: Record<string, number> = {};
   
   clients.forEach(client => {
     if (client.RequestedTaskIDs) {
-      const tasks = client.RequestedTaskIDs.split(',').map((id: string) => id.trim()).filter(Boolean);
-      
-      // Count individual tasks
-      tasks.forEach(taskId => {
-        singleTasks[taskId] = (singleTasks[taskId] || 0) + 1;
-      });
+      const tasks = (client as Client).RequestedTaskIDs.split(',').map((id: string) => id.trim()).filter(Boolean);
       
       // Count task pairs
       if (tasks.length >= 2) {
@@ -207,10 +218,11 @@ function getTaskRequestPatterns(clients: any[]) {
     frequentPairs: Object.entries(taskPairs)
       .filter(([, count]) => count >= 2)
       .sort(([, a], [, b]) => b - a)
-      .slice(0, 5),
-    popularTasks: Object.entries(singleTasks)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 10)
+      .slice(0, 5)
+      .map(([pair, count]) => ({
+        tasks: pair.split('-'),
+        frequency: count
+      }))
   };
 }
 
@@ -233,118 +245,71 @@ function getWorkerGroupDistribution(workers: any[]) {
   return groups;
 }
 
-function getSkillDistribution(workers: any[]) {
-  const skills: Record<string, number> = {};
-  
-  workers.forEach(worker => {
-    if (worker.Skills) {
-      const skillList = worker.Skills.split(',').map((s: string) => s.trim().toLowerCase());
-      skillList.forEach(skill => {
-        skills[skill] = (skills[skill] || 0) + 1;
-      });
-    }
-  });
-  
-  return Object.entries(skills)
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, 10);
-}
-
-function getWorkloadPatterns(workers: any[]) {
-  const loads = workers.map(w => w.MaxLoadPerPhase || 0).filter(l => l > 0);
-  const avgLoad = loads.reduce((sum, load) => sum + load, 0) / loads.length;
-  const maxLoad = Math.max(...loads);
-  const overloadedCount = loads.filter(load => load > avgLoad * 1.5).length;
-  
-  return { avgLoad, maxLoad, overloadedCount, totalWorkers: workers.length };
-}
-
-function getTaskCategories(tasks: any[]) {
-  const categories: Record<string, number> = {};
-  const durations: number[] = [];
-  
-  tasks.forEach(task => {
-    const category = task.Category || 'Other';
-    categories[category] = (categories[category] || 0) + 1;
-    
-    if (task.Duration) {
-      durations.push(task.Duration);
-    }
-  });
-  
-  return { categories, durations };
-}
-
-function getDurationPatterns(tasks: any[]) {
-  const durations = tasks.map(t => t.Duration || 1);
-  const avgDuration = durations.reduce((sum, dur) => sum + dur, 0) / durations.length;
-  const longTasks = tasks.filter(t => (t.Duration || 1) > 3);
-  
-  return { avgDuration, longTaskCount: longTasks.length, longTasks: longTasks.slice(0, 5) };
-}
-
-function getSkillRequirements(tasks: any[]) {
-  const skillDemand: Record<string, number> = {};
-  
-  tasks.forEach(task => {
-    if (task.RequiredSkills) {
-      const skills = task.RequiredSkills.split(',').map((s: string) => s.trim().toLowerCase());
-      skills.forEach(skill => {
-        skillDemand[skill] = (skillDemand[skill] || 0) + 1;
-      });
-    }
-  });
-  
-  return Object.entries(skillDemand)
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, 10);
-}
-
-// Fallback local analysis if LLM fails
+// FALLBACK LOCAL ANALYSIS
 function analyzeLocalPatterns(data: any) {
   const suggestions = [];
   
-  // Simple co-run detection
+  // 1. Find frequent task pairs
   const taskPairs = getTaskRequestPatterns(data.clients).frequentPairs;
   if (taskPairs.length > 0) {
-    const [pairKey, frequency] = taskPairs[0];
-    const [task1, task2] = pairKey.split('-');
-    
+    const topPair = taskPairs[0];
     suggestions.push({
       id: `local_corun_${Date.now()}`,
       type: "coRun",
-      title: `Co-run Tasks ${task1} & ${task2}`,
-      description: `These tasks are requested together by ${frequency} clients`,
-      reasoning: `Found ${frequency} clients requesting both tasks together`,
-      confidence: Math.min(90, 50 + frequency * 10),
-      impact: frequency >= 3 ? "high" : "medium",
-      parameters: { taskIds: [task1, task2] },
-      affectedEntities: [task1, task2],
+      title: `Co-run Tasks ${topPair.tasks.join(' & ')}`,
+      description: `These tasks are requested together by ${topPair.frequency} clients`,
+      reasoning: `Found ${topPair.frequency} clients requesting both tasks`,
+      confidence: Math.min(90, 60 + topPair.frequency * 10),
+      impact: topPair.frequency >= 3 ? "high" : "medium",
+      parameters: { taskIds: topPair.tasks },
+      affectedEntities: topPair.tasks,
       pattern: "frequent_co_requests"
     });
   }
   
-  // Simple load limit detection
+  // 2. Find overloaded worker groups
   const workerGroups = getWorkerGroupDistribution(data.workers);
-  const overloadedGroup = Object.entries(workerGroups)
-    .find(([, stats]) => stats.avgLoad > 4);
+  const overloadedGroups = Object.entries(workerGroups)
+    .filter(([, stats]) => stats.avgLoad > 4)
+    .sort(([, a], [, b]) => b.avgLoad - a.avgLoad);
     
-  if (overloadedGroup) {
-    const [groupName, stats] = overloadedGroup;
+  if (overloadedGroups.length > 0) {
+    const [groupName, stats] = overloadedGroups[0];
     suggestions.push({
       id: `local_load_${Date.now()}`,
       type: "loadLimit",
       title: `Load Limit for ${groupName}`,
       description: `${groupName} workers have high average workload`,
       reasoning: `Average load is ${stats.avgLoad.toFixed(1)}, consider limiting to ${Math.floor(stats.avgLoad * 0.8)}`,
-      confidence: 75,
-      impact: "medium",
+      confidence: 80,
+      impact: "high",
       parameters: { 
         workerGroup: groupName, 
         maxSlotsPerPhase: Math.floor(stats.avgLoad * 0.8) 
       },
       affectedEntities: [`${stats.count} workers`],
       pattern: "workload_imbalance"
+    });
+  }
+  
+  // 3. Phase window for long tasks
+  const longTasks = data.tasks.filter((t: any) => (t.Duration || 1) > 3).slice(0, 2);
+  if (longTasks.length > 0) {
+    const task = longTasks[0];
+    suggestions.push({
+      id: `local_phase_${Date.now()}`,
+      type: "phaseWindow",
+      title: `Phase Window for ${task.TaskID}`,
+      description: `Long duration task should be phase-restricted`,
+      reasoning: `Task duration is ${task.Duration} phases, restrict to early phases`,
+      confidence: 70,
+      impact: "medium",
+      parameters: {
+        taskId: task.TaskID,
+        allowedPhases: [1, 2, 3]
+      },
+      affectedEntities: [task.TaskID],
+      pattern: "duration_optimization"
     });
   }
   

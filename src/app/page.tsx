@@ -18,6 +18,7 @@ import RuleBuilder from '@/components/rules/RuleBuilder';
 import ExportSystem from '@/components/export/ExportSystem';
 import PriorityWeightsSystem from '@/components/prioritization/PriorityWeightsSystem';
 import EnhancedNaturalLanguageDataModifier from '@/components/ai/EnhancedNaturalLanguageDataModifier';
+import AIRuleRecommendations from '@/components/ai/AIRuleRecommendations';
 
 // Import types and validation engine
 import type { ValidationResult, BusinessRule, SearchResult, PriorityWeights, DataState } from '@/types';
@@ -39,14 +40,14 @@ export default function DataAlchemistDashboard() {
     businessRules: [],
     searchResults: [],
     priorityWeights: {
-      priorityLevel: 80,
-      skillMatching: 70,
-      workloadBalance: 60,
-      deadlineAdherence: 90,
-      costOptimization: 50,
-      clientSatisfaction: 85,
-      resourceUtilization: 65,
-      qualityScore: 75
+      priorityLevel: 70,
+      skillMatching: 70, 
+      workloadBalance: 70, //default values
+      deadlineAdherence: 70,
+      costOptimization: 70,
+      clientSatisfaction: 70,
+      resourceUtilization: 70,
+      qualityScore: 70
     },
     filteredView: false,
     isValidating: false
@@ -267,8 +268,15 @@ export default function DataAlchemistDashboard() {
           <ValidationSummary
             validationResults={dataState.validationResults}
             isValidating={dataState.isValidating}
+            data={{
+              clients: [],
+              workers: [],
+              tasks: []
+            }}
+            onDataChange={(entityType, newData) => {
+              handleDataChange(entityType, newData, 'validation-fix');
+            }}
           />
-
           {/* AI Data Corrections with auto-switch */}
           {dataState.validationResults.filter(r => r.severity === 'error').length > 0 && (
             <AIDataCorrections
@@ -468,6 +476,19 @@ export default function DataAlchemistDashboard() {
               </TabsContent>
 
               <TabsContent value="rules" className="h-full overflow-y-auto">
+                <AIRuleRecommendations
+                  data={{
+                    clients: dataState.clients,
+                    workers: dataState.workers,
+                    tasks: dataState.tasks
+                  }}
+                  currentRules={dataState.businessRules}
+                  onRuleAccept={(rule) => {
+                    const updatedRules = [...dataState.businessRules, rule];
+                    handleRulesChange(updatedRules);
+                  }}
+                />
+                
                 <RuleBuilder
                   data={{
                     clients: dataState.clients,
