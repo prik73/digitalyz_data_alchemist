@@ -487,6 +487,7 @@ export default function DataAlchemistDashboard() {
                     const updatedRules = [...dataState.businessRules, rule];
                     handleRulesChange(updatedRules);
                   }}
+                  onDataChange={handleDataChange} // ← ADD THIS CRUCIAL PROP!
                 />
                 
                 <RuleBuilder
