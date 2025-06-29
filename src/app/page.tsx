@@ -1,4 +1,3 @@
-// app/page.tsx - AUTO-SWITCH TO AFFECTED TAB
 'use client';
 
 import React, { useState, useEffect } from 'react';

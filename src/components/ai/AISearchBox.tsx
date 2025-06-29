@@ -1,4 +1,3 @@
-// components/ai/AISearchBox.tsx
 'use client';
 
 import React, { useState, useCallback } from 'react';

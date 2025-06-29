@@ -1,4 +1,3 @@
-// components/ai/EnhancedNaturalLanguageDataModifier.tsx
 'use client';
 
 import React, { useState } from 'react';

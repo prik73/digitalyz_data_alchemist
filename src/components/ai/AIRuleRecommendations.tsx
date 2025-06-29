@@ -1,4 +1,3 @@
-// components/ai/AIRuleRecommendations.tsx - FINAL COMPLETE VERSION
 'use client';
 
 import React, { useState, useEffect } from 'react';
