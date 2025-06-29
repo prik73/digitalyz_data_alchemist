@@ -1,11 +1,11 @@
-// app/page.tsx - FULL-WIDTH FUNCTIONAL DESIGN
+// app/page.tsx - AUTO-SWITCH TO AFFECTED TAB
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { AlertTriangle, CheckCircle, FileText, Users, Briefcase, Sparkles, Zap, Download, Target, Wand2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle, FileText, Users, Briefcase, Sparkles, Zap, Download, Target, Wand2, Bell } from 'lucide-react';
 
 // Import components
 import FileUploader from '@/components/data-ingestion/FileUploader';
@@ -17,12 +17,20 @@ import AIDataCorrections from '@/components/ai/AIDataCorrections';
 import RuleBuilder from '@/components/rules/RuleBuilder';
 import ExportSystem from '@/components/export/ExportSystem';
 import PriorityWeightsSystem from '@/components/prioritization/PriorityWeightsSystem';
+import EnhancedNaturalLanguageDataModifier from '@/components/ai/EnhancedNaturalLanguageDataModifier';
 
 // Import types and validation engine
 import type { ValidationResult, BusinessRule, SearchResult, PriorityWeights, DataState } from '@/types';
 import { ValidationEngine } from '@/lib/validation/validationEngine';
 
 export default function DataAlchemistDashboard() {
+  const [currentTab, setCurrentTab] = useState('data');
+  const [recentChanges, setRecentChanges] = useState<{
+    entityType: 'clients' | 'workers' | 'tasks' | null;
+    timestamp: number;
+    action: string;
+  } | null>(null);
+
   const [dataState, setDataState] = useState<DataState>({
     clients: [],
     workers: [],
@@ -61,10 +69,13 @@ export default function DataAlchemistDashboard() {
       validationResults,
       isValidating: false
     }));
+
+    // Auto-switch to overview to see uploaded data
+    setCurrentTab('data');
   };
 
-  const handleDataChange = (entityType: 'clients' | 'workers' | 'tasks', newData: any[]) => {
-    console.log(`🔄 Data changed for ${entityType}:`, newData.length, 'records');
+  const handleDataChange = (entityType: 'clients' | 'workers' | 'tasks', newData: any[], source?: string) => {
+    console.log(`🔄 Data changed for ${entityType}:`, newData.length, 'records', source ? `via ${source}` : '');
     
     const updatedData = {
       clients: entityType === 'clients' ? newData : dataState.clients,
@@ -79,6 +90,30 @@ export default function DataAlchemistDashboard() {
       [entityType]: newData,
       validationResults
     }));
+
+    // 🚀 AUTO-SWITCH: If change came from AI tools, switch to affected tab
+    if (source === 'ai-modify' || source === 'ai-corrections') {
+      setRecentChanges({
+        entityType,
+        timestamp: Date.now(),
+        action: source === 'ai-modify' ? 'AI Modified' : 'AI Corrected'
+      });
+      
+      // Switch to the affected entity tab after a brief delay
+      setTimeout(() => {
+        setCurrentTab(entityType);
+      }, 500);
+    }
+  };
+
+  // Enhanced wrapper for AI modifications
+  const handleAIDataChange = (entityType: 'clients' | 'workers' | 'tasks', newData: any[]) => {
+    handleDataChange(entityType, newData, 'ai-modify');
+  };
+
+  // Enhanced wrapper for AI corrections
+  const handleAICorrectionChange = (entityType: 'clients' | 'workers' | 'tasks', newData: any[]) => {
+    handleDataChange(entityType, newData, 'ai-corrections');
   };
 
   const handleRulesChange = (rules: BusinessRule[]) => {
@@ -117,6 +152,16 @@ export default function DataAlchemistDashboard() {
       filteredView: false
     }));
   };
+
+  // Clear recent changes notification after 3 seconds
+  useEffect(() => {
+    if (recentChanges) {
+      const timer = setTimeout(() => {
+        setRecentChanges(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [recentChanges]);
 
   // Get filtered data based on search results
   const getFilteredData = () => {
@@ -173,6 +218,16 @@ export default function DataAlchemistDashboard() {
               <p className="text-gray-600">Transform your messy data into gold with AI</p>
             </div>
             <div className="flex items-center gap-4">
+              {/* 🚀 RECENT CHANGES NOTIFICATION */}
+              {recentChanges && (
+                <div className="flex items-center gap-2 px-3 py-1 bg-green-100 border border-green-200 rounded-lg animate-pulse">
+                  <Bell className="w-4 h-4 text-green-600" />
+                  <span className="text-sm text-green-700">
+                    {recentChanges.action} {recentChanges.entityType}
+                  </span>
+                </div>
+              )}
+              
               {dataState.filteredView && (
                 <Badge variant="outline" className="flex items-center gap-1">
                   <Sparkles className="w-3 h-3" />
@@ -192,7 +247,7 @@ export default function DataAlchemistDashboard() {
         </div>
       </div>
 
-      {/* FULL-WIDTH MAIN CONTENT - NO MAX-WIDTH! */}
+      {/* FULL-WIDTH MAIN CONTENT */}
       <div className="w-full h-[calc(100vh-100px)] flex">
         {/* LEFT SIDEBAR - FIXED WIDTH */}
         <div className="w-80 bg-white border-r p-4 overflow-y-auto space-y-4">
@@ -214,7 +269,7 @@ export default function DataAlchemistDashboard() {
             isValidating={dataState.isValidating}
           />
 
-          {/* AI Data Corrections */}
+          {/* AI Data Corrections with auto-switch */}
           {dataState.validationResults.filter(r => r.severity === 'error').length > 0 && (
             <AIDataCorrections
               validationResults={dataState.validationResults}
@@ -223,14 +278,14 @@ export default function DataAlchemistDashboard() {
                 workers: dataState.workers,
                 tasks: dataState.tasks
               }}
-              onDataChange={handleDataChange}
+              onDataChange={handleAICorrectionChange}
             />
           )}
         </div>
 
         {/* RIGHT CONTENT - FULL REMAINING WIDTH */}
         <div className="flex-1 p-4 overflow-hidden">
-          <Tabs defaultValue="data" className="h-full flex flex-col">
+          <Tabs value={currentTab} onValueChange={setCurrentTab} className="h-full flex flex-col">
             <TabsList className="grid w-full grid-cols-8 mb-4">
               <TabsTrigger value="data" className="flex items-center gap-1 text-xs">
                 <FileText className="w-3 h-3" />
@@ -239,14 +294,23 @@ export default function DataAlchemistDashboard() {
               <TabsTrigger value="clients" className="flex items-center gap-1 text-xs">
                 <Users className="w-3 h-3" />
                 Clients ({displayData.clients.length})
+                {recentChanges?.entityType === 'clients' && (
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse ml-1"></div>
+                )}
               </TabsTrigger>
               <TabsTrigger value="workers" className="flex items-center gap-1 text-xs">
                 <Briefcase className="w-3 h-3" />
                 Workers ({displayData.workers.length})
+                {recentChanges?.entityType === 'workers' && (
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse ml-1"></div>
+                )}
               </TabsTrigger>
               <TabsTrigger value="tasks" className="flex items-center gap-1 text-xs">
                 <FileText className="w-3 h-3" />
                 Tasks ({displayData.tasks.length})
+                {recentChanges?.entityType === 'tasks' && (
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse ml-1"></div>
+                )}
               </TabsTrigger>
               <TabsTrigger value="rules" className="flex items-center gap-1 text-xs">
                 <Zap className="w-3 h-3" />
@@ -415,15 +479,15 @@ export default function DataAlchemistDashboard() {
                 />
               </TabsContent>
 
-              {/* AI DATA MODIFICATION TAB */}
+              {/* AI DATA MODIFICATION TAB with auto-switch */}
               <TabsContent value="ai-modify" className="h-full overflow-y-auto">
-                <NaturalLanguageDataModifier
+                <EnhancedNaturalLanguageDataModifier
                   data={{
                     clients: dataState.clients,
                     workers: dataState.workers,
                     tasks: dataState.tasks
                   }}
-                  onDataChange={handleDataChange}
+                  onDataChange={handleAIDataChange}
                 />
               </TabsContent>
 
