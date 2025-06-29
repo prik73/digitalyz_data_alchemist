@@ -1,4 +1,3 @@
-// components/ai/AIRuleRecommendations.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -6,22 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import {
-  Sparkles,
-  Loader2,
-  CheckCircle,
-  X,
-  Lightbulb,
-  TrendingUp,
-  Users,
-  Briefcase,
-  FileText,
-  Zap,
-  AlertTriangle,
-  ThumbsUp,
-  ThumbsDown,
-  Settings
-} from 'lucide-react';
+import {  Sparkles,  Loader2,  CheckCircle,  X,  Lightbulb,  TrendingUp,  Users,  Briefcase,  FileText,  Zap,  AlertTriangle,  ThumbsUp,  ThumbsDown,  Settings} from 'lucide-react';
 import type { BusinessRule } from '@/types';
 
 interface RuleSuggestion {
